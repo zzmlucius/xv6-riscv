@@ -10,12 +10,12 @@ int main(int argc, char *argv[])
 
     uint64 mask = atoi(argv[1]);
     int n = argc - 2;
-    char *nargv[n];
-    
+    char *nargv[n]; 
     //
-    for(int i = 0;i < n;i++) {
+    for(int i = 0;i < n;i++) 
         nargv[i] = argv[i + 2];
-    }
+    
+    nargv[n] = 0; // Attention : argv[]参数必须以 0 结尾
 
     if(mask < 0 || mask > 2147483647) {
         fprintf(2, "trace : mask out of range.");
@@ -23,7 +23,9 @@ int main(int argc, char *argv[])
 
     trace(mask);
 
-    exec(nargv[0], nargv);
+    exec(nargv[0], nargv); // Attention : exec()后的代码跟 exit(1)
 
-    exit(0);
+    fprintf(2, "trace: exec %s failed\n", nargv[0]);
+
+    exit(1);
 }

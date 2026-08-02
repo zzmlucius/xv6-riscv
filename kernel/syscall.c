@@ -174,7 +174,7 @@ syscall(void)
     // and store its return value in p->trapframe->a0
     p->trapframe->a0 = syscalls[num]();
     if(p->mask & (1 << num)) { //mask二进制的第num位 == 1,按位与规则两1才为1
-      printf("%d: syscall %s -> %d", p->pid, syscallnames[num], p->trapframe->a0);
+      printk("%d: syscall %s -> %lu", p->pid, syscallnames[num], p->trapframe->a0);
     }
   } else {
     printk("%d %s: unknown sys call %d\n", p->pid, p->name, num);
