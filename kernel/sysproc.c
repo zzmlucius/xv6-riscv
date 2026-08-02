@@ -107,3 +107,17 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_trace(void) // sys_trace implementation
+{
+  // 只有当前进程会访问 p->mask,所以不用lock
+  int mask;
+  
+  // RISC-V ABI 规定 一开始user.h/trace()第一个参数放在a0寄存器
+  argint(0, &mask); 
+  
+  struct proc *p = myproc();
+  p->mask = mask;
+  return 0;
+}

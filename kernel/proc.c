@@ -292,6 +292,9 @@ kfork(void)
 
   pid = np->pid;
 
+  // trace the child
+  np->mask = p->mask;
+
   release(&np->lock);
 
   acquire(&wait_lock);
