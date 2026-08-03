@@ -20,11 +20,11 @@ struct run {
 
 struct {
   struct spinlock lock;
-  struct run *freelist;
-} kmem;
+  struct run *freelist; // the head of the list
+} kmem;                 // skip the struct name
 
 void
-kinit()
+kinit() // 初始化整个内存(包括user, kernel)
 {
   initlock(&kmem.lock, "kmem");
   freerange(end, (void *)PHYSTOP);
@@ -62,7 +62,7 @@ kfree(void *pa)
   release(&kmem.lock);
 }
 
-// Allocate one 4096-byte page of physical memory.
+// Allocate one 4096-byte page of physical memory. (from freelist)
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
 void *
@@ -73,10 +73,26 @@ kalloc(void)
   acquire(&kmem.lock);
   r = kmem.freelist;
   if (r)
-    kmem.freelist = r->next;
+    kmem.freelist = r->next;     // 去除链表头
   release(&kmem.lock);
 
   if (r)
     memset((char *)r, 5, PGSIZE); // fill with junk
   return (void *)r;
+}
+
+
+// calculate the freememory
+uint64
+freemem(void)
+{
+  uint64 bytes = 0;
+  struct run *r;
+
+  acquire(&kmem.lock);
+  for(r = kmem.freelist; r != 0; r = r->next)
+    bytes += PGSIZE;
+  release(&kmem.lock);
+
+  return bytes;
 }

@@ -6,6 +6,8 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
+#include "sysinfo.h"
+
 
 uint64
 sys_exit(void)
@@ -119,5 +121,21 @@ sys_trace(void) // sys_trace implementation
   
   struct proc *p = myproc();
   p->mask = mask;
+  return 0;
+}
+
+uint64 
+sys_info(void) { // 遍历freelist和proc[NPROC]数组
+  struct sysinfo kif;
+  uint64 ifp;
+  
+  argaddr(0, &ifp); // 拿过来的用户态的地址
+  
+  kif.freemem  = freemem();
+  kif.nproc    = nproc();
+
+  if(copyout(myproc() -> pagetable, ifp, (char*)&kif, sizeof(kif)) < 0)
+    return -1;
+
   return 0;
 }
