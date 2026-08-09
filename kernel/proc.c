@@ -107,7 +107,7 @@ allocpid()
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
 static struct proc *
-allocproc(void) 
+allocproc(void)
 {
   struct proc *p;
 
@@ -133,7 +133,17 @@ found:
     return 0;
   }
 
-  // An empty user page table.
+  // Allocate a usyscall page
+  if((p -> usysp = (struct usyscall*)kalloc()) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  memset(p->usysp, 0, PGSIZE);
+  p -> usysp -> pid  = p -> pid;
+
+  // An empty user page table. 
+  // only trampoline and trapframe, without user memory(adding a usyscall)
   p->pagetable = proc_pagetable(p);
   if (p->pagetable == 0) {
     freeproc(p);
@@ -159,6 +169,9 @@ freeproc(struct proc *p)
   if (p->trapframe)
     kfree((void *)p->trapframe);
   p->trapframe = 0;
+  if (p->usysp)
+    kfree((void *)p->usysp);
+  p->usysp = 0;
   if (p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -188,7 +201,9 @@ proc_pagetable(struct proc *p)
   // at the highest user virtual address.
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
-  if (mappages(pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline,
+
+  // user's trampoline and trapframe directly mapping to pa
+  if (mappages(pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline, // 表示让TRAMPOLINE访问trampoline代码所在物理页
                PTE_R | PTE_X) < 0) {
     uvmfree(pagetable, 0);
     return 0;
@@ -203,6 +218,15 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  // map the usyscall page below the trapframe page
+  if (mappages(pagetable, USYSCALL, PGSIZE, (uint64)(p->usysp),
+               PTE_R | PTE_U) < 0) {
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+  
   return pagetable;
 }
 
@@ -213,6 +237,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -242,7 +267,7 @@ growproc(int n)
 
   sz = p->sz;
   if (n > 0) {
-    if (sz + n > TRAPFRAME) {
+    if (sz + n > USYSCALL) {
       return -1;
     }
     if ((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {

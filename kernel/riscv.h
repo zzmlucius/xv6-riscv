@@ -392,8 +392,8 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_FLAGS(pte) ((pte) & 0x3FF)
 
 // extract the three 9-bit page table indices from a virtual address.
-#define PXMASK         0x1FF // 9 bits
-#define PXSHIFT(level) (PGSHIFT + (9 * (level)))
+#define PXMASK         0x1FF // 9 bits = 1 1111 1111
+#define PXSHIFT(level) (PGSHIFT + (9 * (level))) // 第level层虚拟地址的起始位
 #define PX(level, va)  ((((uint64)(va)) >> PXSHIFT(level)) & PXMASK)
 
 // one beyond the highest possible virtual address.

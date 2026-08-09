@@ -96,30 +96,30 @@ kvminithart()
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
 pte_t *
-walk(pagetable_t pagetable, uint64 va, int alloc)
+walk(pagetable_t pagetable, uint64 va, int alloc) // 寻址、创建新页表页、查询
 {
   if (va >= MAXVA)
     panic("walk");
 
   for (int level = 2; level > 0; level--) {
-    pte_t *pte = &pagetable[PX(level, va)];
+    pte_t *pte = &pagetable[PX(level, va)];  // pagetable即PTE数组，PX(level, va)获得索引
     if (*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
-      if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
-        return 0;
+      if (!alloc || (pagetable = (pde_t *)kalloc()) == 0) // alloc = 0表示只查询，缺页就返回0
+        return 0;                                         // alloc = 1表示缺页就分配
       memset(pagetable, 0, PGSIZE);
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
-  return &pagetable[PX(0, va)];
+  return &pagetable[PX(0, va)]; // 返回L0PTE所在地址
 }
 
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
 uint64
-walkaddr(pagetable_t pagetable, uint64 va)
+walkaddr(pagetable_t pagetable, uint64 va) // 返回L0PTE物理页起始地址
 {
   pte_t *pte;
   uint64 pa;
@@ -190,6 +190,7 @@ uvmcreate()
 // Remove npages of mappings starting from va. va must be
 // page-aligned. It's OK if the mappings don't exist.
 // Optionally free the physical memory.
+// 用于释放已经建立在pagetable上的va
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -281,6 +282,7 @@ freewalk(pagetable_t pagetable)
 
 // Free user memory pages,
 // then free page-table pages.
+// 释放整个进程页表
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
@@ -348,11 +350,11 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   pte_t *pte;
 
   while (len > 0) {
-    va0 = PGROUNDDOWN(dstva);
-    if (va0 >= MAXVA)
+    va0 = PGROUNDDOWN(dstva);         
+    if (va0 >= MAXVA)         
       return -1;
 
-    pa0 = walkaddr(pagetable, va0);
+    pa0 = walkaddr(pagetable, va0);     
     if (pa0 == 0) {
       if ((pa0 = vmfault(pagetable, va0, 0)) == 0) {
         return -1;
