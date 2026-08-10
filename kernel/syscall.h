@@ -24,3 +24,4 @@
 #define SYS_trace    23
 #define SYS_info     24
 #define SYS_shutdown 25
+#define SYS_pgaccess 26

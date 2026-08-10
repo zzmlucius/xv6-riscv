@@ -146,3 +146,54 @@ sys_shutdown(void) {
   *sdreg = (uint32)SBIT;
   return 0;
 }
+
+uint64
+sys_pgaccess(void) {
+  struct proc *p = myproc();
+  uint64 va;
+  int npages;
+  uint64 ua;
+
+  argaddr(0, &va);
+  argint(1, &npages);
+  argaddr(2, &ua);
+
+  uint buf = 0; // 存掩码
+
+  if(npages > 32 || npages < 0)
+    return -1;
+
+  if(va % PGSIZE)
+    va -= va % PGSIZE; // 页对齐
+
+  if(va + npages * PGSIZE > MAXVA) 
+    return -1;
+  
+  for(int i = 0;i < npages;i++) {
+    if(va < MAXVA) {           // 检查合法性
+      uint64 *pte = 0;
+      if((pte = walk(p->pagetable, va, 0)) == 0) {
+        va += PGSIZE;
+        continue;
+      }
+
+      if(*pte & PTE_V) { // PTE_A位 = 1 记录并消除标记
+        if(*pte & PTE_A) {
+          buf += (1U << i);
+          *pte = *pte & (~PTE_A);
+        }
+      }
+
+      va += PGSIZE;
+    }
+
+    else
+      return -1;
+  }
+
+  // 将buf中的结果传到用户
+  if(copyout(myproc() -> pagetable, ua, (char*)(&buf), sizeof(buf)) < 0)
+    return -1;
+  
+  return 0;
+}

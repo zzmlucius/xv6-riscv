@@ -46,3 +46,4 @@ entry("sync");
 entry("trace");
 entry("info");
 entry("shutdown");
+entry("pgaccess");
