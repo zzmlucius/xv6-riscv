@@ -139,3 +139,10 @@ sys_info(void) { // 遍历freelist和proc[NPROC]数组
 
   return 0;
 }
+
+uint64
+sys_shutdown(void) {
+  volatile uint32* sdreg = (uint32*)SHUTDOWN;
+  *sdreg = (uint32)SBIT;
+  return 0;
+}

@@ -17,7 +17,12 @@
 // end -- start of kernel page allocation area
 // PHYSTOP -- end RAM used by the kernel
 
+// qemu puts the shutdown register here in physical memory
+#define SHUTDOWN 0x00100000
+#define SBIT     0x5555
+
 // qemu puts UART registers here in physical memory.
+// IRQ : Interrupt Request 这些数字表示设备在PLIC中断控制器里的中断信号
 #define UART0     0x10000000L
 #define UART0_IRQ 10
 
