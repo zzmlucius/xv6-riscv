@@ -488,3 +488,40 @@ ismapped(pagetable_t pagetable, uint64 va)
   }
   return 0;
 }
+
+// format the vmprint
+static
+void
+format(pagetable_t pagetable, int n) {
+  for(int i = 0;i < 512;i++) {
+    pte_t pte = pagetable[i];    // 取出一项pte
+    if((pte & PTE_V) == 0) {     // 无效页表跳过
+      continue;
+    }
+
+    if((pte & (PTE_R | PTE_W | PTE_X)) == 0) { // valid但是不能读写执行是中间页表项
+      pagetable_t child = (pagetable_t)(PTE2PA(pte));
+      for(int i = 1;i <= n;i++) {
+        printk(" ..");
+      }
+      printk("%d: pte %p pa %p\n", i, (pagetable_t)pte, child);
+      format(child, n + 1);
+    }
+
+    else { // 叶子页表项
+      for(int i = 1;i <= n;i++) {
+        printk(" ..");
+      }
+      printk("%d: pte %p pa %p\n", i, (pagetable_t)pte, (pagetable_t)PTE2PA(pte));
+    }
+  }
+  return;
+}
+
+// print the pagetable va and pa while exec
+void
+vmprint(pagetable_t pagetable)
+{
+  format(pagetable, 1);
+  return;
+}

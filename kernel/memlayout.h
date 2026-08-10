@@ -62,9 +62,10 @@
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
 
+// a space using to speed up certain user syscall.
 #define USYSCALL (TRAPFRAME - PGSIZE)
 
-#ifndef __ASSEMBLER__ // 让同一个头文件同时兼容C与汇编
+#ifndef __ASSEMBLER__ // 让同一个头文件同时兼容C与汇编，汇编器会绕过他，C编译器会保留他
 struct usyscall {
     int pid;
 };
