@@ -94,7 +94,7 @@ uservec:
         # flush now-stale user entries from the TLB.
         sfence.vma zero, zero
 
-        # call usertrap()
+        # call usertrap() ra = pc + 4
         jalr t0
 
 .globl userret
@@ -103,6 +103,11 @@ userret:
         # return from kernel to user.
 
         # switch to the user page table.
+        # usertrap()返回时有两个彼此独立的效果
+        # uservec jalr t0相当于call usertrap()那么ra必然为userret
+        # a0接住usertrap的返回值satp
+        # 所以 pc -> userret
+        # a0 -> 用户satp
         sfence.vma zero, zero
         csrw satp, a0
         sfence.vma zero, zero

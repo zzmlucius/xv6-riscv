@@ -134,12 +134,14 @@ printk(char *fmt, ...)
   return 0;
 }
 
+// add backtrace to trace the stack frame when panic
 void
 panic(char *s)
 {
   panicking = 1;
   printk("panic: ");
   printk("%s\n", s);
+  backtrace();
   panicked = 1; // freeze uart output from other CPUs
   for (;;)
     ;
@@ -149,4 +151,18 @@ void
 printkinit(void)
 {
   initlock(&pr.lock, "pr");
+}
+
+// 打印调用栈的栈帧
+void
+backtrace(void) {
+  printk("backtrace:\n");
+  uint64 fp   = r_fp();
+  uint64 pgup = PGROUNDUP((uint64)fp);
+
+  while(fp < pgup) {
+    uint64 ra = *((uint64 *)(fp - 8));
+    printk("%p\n", (uint64 *)(ra));    // 打印的是ra
+    fp = *((uint64 *)fp - 2);
+  }
 }

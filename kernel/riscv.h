@@ -359,6 +359,14 @@ r_ra()
   return x;
 }
 
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
+}
+
 // flush the TLB.
 static inline void
 sfence_vma()
@@ -375,6 +383,7 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PGSIZE  4096 // bytes per page
 #define PGSHIFT 12   // bits of offset within a page
 
+// 将页面向下取整或向上取整到页开头或结尾
 #define PGROUNDUP(sz)  (((sz) + PGSIZE - 1) & ~(PGSIZE - 1))
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE - 1))
 
