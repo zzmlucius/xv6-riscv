@@ -197,3 +197,22 @@ sys_pgaccess(void) {
   
   return 0;
 }
+
+uint64
+sys_sigalarm(void) {
+  struct proc *p = myproc();
+
+  argint(0, &p->interval);
+  argaddr(1, &p->ttrhandler);
+  p->handling = 0;
+
+  return 0;
+}
+
+uint64
+sys_sigreturn(void) {
+  struct proc *p = myproc();
+  memmove(p->trapframe, p->ttr_trapframe, sizeof(struct trapframe));
+  p->handling = 0;
+  return p->trapframe->a0; // 接下来会trampoline/userret 会直接trampoline的a0, 不能修改
+}

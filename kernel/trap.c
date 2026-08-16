@@ -82,11 +82,34 @@ usertrap(void)
     kexit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2)
+  if (which_dev == 2) {
+    if(p->handling == 0 && p->interval > 0) {
+      p->timeintrs++;
+    }
+
     yield();
 
-  prepare_return();
+    if(p->interval && p->timeintrs >= p->interval) {
+      p->handling  = 1; // handling the time interrupt
+      p->timeintrs = 0;
 
+      prepare_return();
+      // modify the sepc
+      // write handler to sepc, so sret will back to handler
+      // and the right sepc still in the p -> trapframe -> epc.
+      memmove(p->ttr_trapframe, p->trapframe, sizeof(struct trapframe));
+      w_sepc(p->ttrhandler);
+
+      // the user page table to switch to, for trampoline.S
+      uint64 satp = MAKE_SATP(p->pagetable);
+
+      // return to trampoline.S; satp value in a0.
+      return satp;
+    }
+  }
+
+  prepare_return();
+  
   // the user page table to switch to, for trampoline.S
   uint64 satp = MAKE_SATP(p->pagetable);
 

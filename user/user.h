@@ -30,6 +30,8 @@ int trace(int);
 int info(struct sysinfo *);
 int shutdown(void);
 int pgaccess(void *, int, void *);
+int sigalarm(int ticks, void (*handler)());
+int sigreturn(void);
 
 // ulib.c
 int stat(const char *, struct stat *);
