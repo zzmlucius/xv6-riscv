@@ -89,7 +89,7 @@ usertrap(void)
 
     yield();
 
-    if(p->interval && p->timeintrs >= p->interval) {
+    if(p->interval && p->timeintrs >= p->interval && p->handling == 0) {
       p->handling  = 1; // handling the time interrupt
       p->timeintrs = 0;
 
@@ -104,6 +104,7 @@ usertrap(void)
       uint64 satp = MAKE_SATP(p->pagetable);
 
       // return to trampoline.S; satp value in a0.
+      // former a0 in ttr_trapframe
       return satp;
     }
   }

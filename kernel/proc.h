@@ -108,7 +108,7 @@ struct proc {
   uint64 mask;                    // Trace mask
   struct usyscall *usysp;         // pa of the usys
   uint timeintrs;                 // memorize the proc timeinterrupt times
-  uint interval;                  // when altick reach interval, cause tick interrupt 
+  int interval;                  // when altick reach interval, cause tick interrupt 
   uint64 ttrhandler;              // handler function of the time interrupt
   int handling;                   // if the code between the handler ~ sigreturn
 };

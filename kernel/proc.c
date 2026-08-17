@@ -127,6 +127,8 @@ found:
   p->mask = 0;
   p->timeintrs = 0;
   p->interval = 0;
+  p->ttrhandler = 0;
+  p->handling = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {

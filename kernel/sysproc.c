@@ -204,7 +204,8 @@ sys_sigalarm(void) {
 
   argint(0, &p->interval);
   argaddr(1, &p->ttrhandler);
-  p->handling = 0;
+  
+  p->timeintrs = 0;
 
   return 0;
 }
