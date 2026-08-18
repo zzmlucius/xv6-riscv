@@ -29,32 +29,31 @@ struct spinlock wait_lock;
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
-void
-proc_mapstacks(pagetable_t kpgtbl)
+uint64
+proc_mapstacks(struct proc *p, pagetable_t kpgtbl)
 {
-  struct proc *p;
-
-  for (p = proc; p < &proc[NPROC]; p++) {
-    char *pa = kalloc();
-    if (pa == 0)
-      panic("kalloc");
-    uint64 va = KSTACK((int)(p - proc));
-    kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-  }
+  char *pa = kalloc();
+  if (pa == 0) {
+    printk("proc_mapstacks : kalloc failed");
+    return 0;
+  } 
+  uint64 va = KSTACK((int)(p - proc));
+  kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  
+  p->kstack = va;
+  return (uint64)pa;
 }
 
 // initialize the proc table.
 void
 procinit(void)
 {
-  struct proc *p;
-
+  struct proc * p;
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
-    p->kstack = KSTACK((int)(p - proc));
   }
 }
 
@@ -130,6 +129,13 @@ found:
   p->ttrhandler = 0;
   p->handling = 0;
 
+  // Initialize a kernel pagetable per process
+  if((p->k_pagetable = (pagetable_t)kvmmake()) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
     freeproc(p);
@@ -162,6 +168,15 @@ found:
     return 0;
   }
 
+  // allocate and map a kernel stack for each process.
+
+  // modified : allocate and map a kernel stack for its own process
+  if(proc_mapstacks(p, p->k_pagetable) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -186,9 +201,27 @@ freeproc(struct proc *p)
   if (p->ttr_trapframe)
     kfree((void *)p->ttr_trapframe);
   p->ttr_trapframe = 0;
+
+  if (p->kstack) {
+    pte_t *pte = walk(p->k_pagetable, p->kstack, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & (PTE_W | PTE_R | PTE_X)) == 0) {
+      panic("freeproc failed : fail to free kstack");
+    }
+    else
+      kfree((void *)PTE2PA(*pte));
+  }
+    
+  if (p->k_pagetable)
+    kvmunmap(p->k_pagetable);      // 解除所有映射，清除中间页表和根页表
   if (p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+
+  // 释放kernel stack
+
+  
+  p->k_pagetable = 0;
   p->pagetable = 0;
+  p->kstack = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -484,6 +517,12 @@ scheduler(void)
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if (p->state == RUNNABLE) {
+
+        // change the process kernel pagetable, it can still be used by scheduler()
+        sfence_vma();
+        w_satp(MAKE_SATP(p->k_pagetable));
+        sfence_vma();
+
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
@@ -491,15 +530,20 @@ scheduler(void)
         c->proc = p;
         swtch(&c->context, &p->context);
 
+        // back to the global kernel pagetable
+        kvminithart();
+
         // Process is done running for now.
         // It should have changed its p->state before coming back.
+
         c->proc = 0;
         found = 1;
       }
       release(&p->lock);
     }
     if (found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
+      // nothing to run : running on the global kernel_pagetable
+      kvminithart();
       asm volatile("wfi");
     }
   }

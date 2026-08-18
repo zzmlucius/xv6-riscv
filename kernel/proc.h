@@ -99,6 +99,7 @@ struct proc {
   uint64 kstack;                  // Virtual address of kernel stack
   uint64 sz;                      // Size of process memory (bytes)
   pagetable_t pagetable;          // User page table, 即用户态的根页表(satp)
+  pagetable_t k_pagetable;        // Kernel page table copy
   struct trapframe *trapframe;    // data page for trampoline.S
   struct trapframe *ttr_trapframe;// save the trapframe from the handler 
   struct context context;         // swtch() here to run process

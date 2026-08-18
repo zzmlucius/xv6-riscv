@@ -17,13 +17,17 @@ extern char etext[]; // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
-// Make a direct-map page table for the kernel.
+// Make a direct-map page table for the kernel execpt kernel stack
 pagetable_t
 kvmmake(void)
 {
   pagetable_t kpgtbl;
 
-  kpgtbl = (pagetable_t)kalloc();
+  if((kpgtbl = (pagetable_t)kalloc()) == 0) {
+    printk("kvmmake : fail to alloc a kernel pagetable");
+    return 0;
+  }
+    
   memset(kpgtbl, 0, PGSIZE);
 
   // shutdown register
@@ -49,9 +53,6 @@ kvmmake(void)
   // the highest virtual address in the kernel.
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
-  // allocate and map a kernel stack for each process.
-  proc_mapstacks(kpgtbl);
-
   return kpgtbl;
 }
 
@@ -66,10 +67,18 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 }
 
 // Initialize the kernel_pagetable, shared by all CPUs.
-void
+// 返回一个建立初步映射的内核页表
+
+pagetable_t
 kvminit(void)
 {
   kernel_pagetable = kvmmake();
+
+  if(kernel_pagetable == 0) {
+    printk("kvminit : failed to initialize the kernel_pagetable");
+  }
+
+  return kernel_pagetable;
 }
 
 // Switch the current CPU's h/w page table register to
@@ -214,6 +223,27 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     }
     *pte = 0;
   }
+}
+
+// Only free the mappings page, reserve the data pages !
+// Only unmap the links built by kvmmap, mappings of kernel stack has to be clean too
+// Can not free the physical addresses
+void
+kvmunmap(pagetable_t k_pagetable)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = k_pagetable[i];
+    if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      kvmunmap((pagetable_t)child);
+      k_pagetable[i] = 0;
+    } else if ((pte & PTE_V) && (pte & (PTE_W | PTE_R | PTE_X))) { // unmap the L0 but reserve the data
+      k_pagetable[i] = 0;
+      continue;
+    }
+  }
+  kfree((void *)k_pagetable);
 }
 
 // Allocate PTEs and physical memory to grow a process from oldsz to

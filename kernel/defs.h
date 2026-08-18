@@ -85,7 +85,7 @@ int             cpuid(void);
 void            kexit(int);
 int             kfork(void);
 int             growproc(int);
-void            proc_mapstacks(pagetable_t);
+uint64          proc_mapstacks(struct proc *p, pagetable_t);
 pagetable_t     proc_pagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
 int             kkill(int);
@@ -154,8 +154,9 @@ void            uartwrite(char [], int);
 void            uartputc_sync(int);
 
 // vm.c
-void            kvminit(void);
+pagetable_t     kvminit(void);
 void            kvminithart(void);
+pagetable_t     kvmmake(void);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
@@ -164,6 +165,7 @@ uint64          uvmdealloc(pagetable_t, uint64, uint64);
 int             uvmcopy(pagetable_t, pagetable_t, uint64);
 void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
+void            kvmunmap(pagetable_t);
 void            uvmclear(pagetable_t, uint64);
 pte_t *         walk(pagetable_t, uint64, int);
 uint64          walkaddr(pagetable_t, uint64);
