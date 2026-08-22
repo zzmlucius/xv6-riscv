@@ -31,7 +31,7 @@ kvmmake(void)
   memset(kpgtbl, 0, PGSIZE);
 
   // shutdown register
-  kvmmap(kpgtbl, SHUTDOWN, SHUTDOWN, PGSIZE, PTE_R | PTE_W);
+  kvmmap(kpgtbl, SHUTDOWN_VA, SHUTDOWN_PA, PGSIZE, PTE_R | PTE_W);
 
   // uart registers
   kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
@@ -202,7 +202,7 @@ uvmcreate()
 // Remove npages of mappings starting from va. va must be
 // page-aligned. It's OK if the mappings don't exist.
 // Optionally free the physical memory.
-// 用于释放已经建立在pagetable上的va
+// Skip the middle page, Only unmap the L0 PTE
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -226,7 +226,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 }
 
 // Only free the mappings page, reserve the data pages !
-// Only unmap the links built by kvmmap, mappings of kernel stack has to be clean too
+// Only unmap the links built by kvmmap, mappings of kernel stack has to be cleaned before
 // Can not free the physical addresses
 void
 kvmunmap(pagetable_t k_pagetable)
@@ -310,6 +310,7 @@ freewalk(pagetable_t pagetable)
       panic("freewalk: leaf");
     }
   }
+  // 已来到L2且叶子页(data page)已被释放, 将释放L2映射页(map page)
   kfree((void *)pagetable);
 }
 
@@ -343,12 +344,12 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue; // page table entry hasn't been allocated
     if ((*pte & PTE_V) == 0)
       continue; // physical page hasn't been allocated
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
+    pa = PTE2PA(*pte);       // 取出pte对应的物理地址pa
+    flags = PTE_FLAGS(*pte); // 取出pte中的flags
     if ((mem = kalloc()) == 0)
       goto err;
-    memmove(mem, (char *)pa, PGSIZE);
-    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
+    memmove(mem, (char *)pa, PGSIZE); // 将pa中大小位PGSIZE的数据移入mem (memmove要求两个pa)
+    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) { // va : i, pa : mem, 注意mappages的作用是将ra refer to the exited pa
       kfree(mem);
       goto err;
     }
@@ -357,6 +358,43 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
 err:
   uvmunmap(new, 0, i / PGSIZE, 1);
+  return -1;
+}
+
+// Copy upgtbl to kpgtbl, Only mapping no creating.
+// lowaddr need to be page-aligned
+// If failed, return -1
+int
+u2kvmmap(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 lowaddr, uint64 highaddr)
+{
+  if ((highaddr >= PLIC)) { // 内核页表上用户内存不能超过PLIC
+    printk("u2kvmmap : user memmory out of range(PLIC)");
+    return -1;
+  }
+  
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+
+  for (i = PGROUNDUP(lowaddr); i < highaddr; i += PGSIZE) {
+    if ((pte = walk(upgtbl, i, 0)) == 0)
+      continue; // page table entry hasn't been allocated
+    if ((*pte & PTE_V) == 0)
+      continue; // physical page hasn't been allocated
+    pa = PTE2PA(*pte);
+
+    // set the PTE_U = 0 for k_pagetable to visit it through MMU
+    flags = PTE_FLAGS(*pte & (uint64)(~PTE_U));
+
+    if (mappages(kpgtbl, i, PGSIZE, pa, flags) != 0) // 页映射不是精确映射
+      goto err;
+  }
+
+  return 0;
+
+err:
+  // 映射失败不能释放物理页
+  uvmunmap(kpgtbl, PGROUNDUP(lowaddr), (i - PGROUNDUP(lowaddr)) / PGSIZE, 0); 
   return -1;
 }
 
@@ -387,12 +425,9 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if (va0 >= MAXVA)         
       return -1;
 
-    pa0 = walkaddr(pagetable, va0);     
-    if (pa0 == 0) {
-      if ((pa0 = vmfault(pagetable, va0, 0)) == 0) {
-        return -1;
-      }
-    }
+    pa0 = walkaddr(pagetable, va0);
+    if (pa0 == 0)
+      return -1;
 
     pte = walk(pagetable, va0, 0);
     // forbid copyout over read-only user text pages.
@@ -411,9 +446,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   return 0;
 }
 
-// Copy from user to kernel.
-// Copy len bytes to dst from virtual address srcva in a given page table.
-// Return 0 on success, -1 on error.
+/*
+// Original copyin: walk the user page table in software.
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
@@ -422,11 +456,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   while (len > 0) {
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
-    if (pa0 == 0) {
-      if ((pa0 = vmfault(pagetable, va0, 1)) == 0) {
-        return -1;
-      }
-    }
+    if (pa0 == 0)
+      return -1;
     n = PGSIZE - (srcva - va0);
     if (n > len)
       n = len;
@@ -438,11 +469,40 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   }
   return 0;
 }
+*/
 
-// Copy a null-terminated string from user to kernel.
-// Copy bytes to dst from virtual address srcva in a given page table,
-// until a '\0', or max.
-// Return 0 on success, -1 on error.
+// Copy from user to kernel on p->k_pagetable
+// Use only va
+// Return 0 on success, -1 on error
+int
+copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+{
+  (void)pagetable;
+  struct proc *p = myproc();
+
+  // dst is a kernel address. Check only that the complete user source
+  // range is within the process, without overflowing srcva + len.
+  if(srcva > p->sz || len > p->sz - srcva) {
+    return -1;
+  }
+  uint64 va0, n;
+  while (len > 0) {
+    va0 = PGROUNDDOWN(srcva);
+    n = PGSIZE - (srcva - va0); // 从srcva开始到该页结束剩下的量
+    if (n > len)
+      n = len;
+    
+    memmove(dst, (void *)srcva, n); // 将srcva的东西移到dst, 每次长度为len
+
+    len -= n;
+    dst += n;
+    srcva = va0 + PGSIZE;
+  }
+  return 0;
+}
+
+/*
+// Original copyinstr: walk the user page table in software.
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
@@ -481,45 +541,56 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+*/
 
-// allocate and map user memory if process is referencing a page
-// that was lazily allocated in sys_sbrk().
-// returns 0 if va is invalid or already mapped, or if
-// out of physical memory, and physical address if successful.
-uint64
-vmfault(pagetable_t pagetable, uint64 va, int read)
+// Copy a null-terminated string from user to kernel.
+// Only use va, Copy bytes to dst from srcva
+// until a '\0', or max.
+// Return 0 on success, -1 on error.
+int
+copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 mem;
+  (void)pagetable;
+  uint64 n, va0;
+  int got_null = 0;
+
   struct proc *p = myproc();
 
-  if (va >= p->sz)
-    return 0;
-  va = PGROUNDDOWN(va);
-  if (ismapped(pagetable, va)) {
-    return 0;
+  // dst is a kernel address. Limit the scan to the mapped user range.
+  if(srcva >= p->sz) {
+    return -1;
   }
-  mem = (uint64)kalloc();
-  if (mem == 0)
-    return 0;
-  memset((void *)mem, 0, PGSIZE);
-  if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0) {
-    kfree((void *)mem);
-    return 0;
-  }
-  return mem;
-}
+  if(max > p->sz - srcva)
+    max = p->sz - srcva;
 
-int
-ismapped(pagetable_t pagetable, uint64 va)
-{
-  pte_t *pte = walk(pagetable, va, 0);
-  if (pte == 0) {
+  while (got_null == 0 && max > 0) {
+    va0 = PGROUNDDOWN(srcva);
+    n = PGSIZE - (srcva - va0);
+    if (n > max)
+      n = max;
+
+    char *p = (char *)srcva;
+    while (n > 0) {
+      if (*p == '\0') {
+        *dst = '\0';
+        got_null = 1;
+        break;
+      } else {
+        *dst = *p;
+      }
+      --n;
+      --max;
+      p++;
+      dst++;
+    }
+
+    srcva = va0 + PGSIZE;
+  }
+  if (got_null) {
     return 0;
+  } else {
+    return -1;
   }
-  if (*pte & PTE_V) {
-    return 1;
-  }
-  return 0;
 }
 
 // format the vmprint

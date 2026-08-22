@@ -17,8 +17,10 @@
 // end -- start of kernel page allocation area
 // PHYSTOP -- end RAM used by the kernel
 
-// qemu puts the shutdown register here in physical memory
-#define SHUTDOWN 0x00100000
+// qemu puts the shutdown register here in physical memory,
+// write SBIT to it will shutdown
+#define SHUTDOWN_PA 0x00100000
+#define SHUTDOWN_VA (KERNBASE - PGSIZE) // KERNBASE - PGSIZE = 0x7ffff000
 #define SBIT     0x5555
 
 // qemu puts UART registers here in physical memory.

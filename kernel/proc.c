@@ -314,16 +314,41 @@ growproc(int n)
 
   sz = p->sz;
   if (n > 0) {
-    if (sz + n > USYSCALL) {
+    if (sz + n >= PLIC) {
       return -1;
     }
-    if ((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
-      return -1;
+
+    if ((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) != 0) {
+      if (u2kvmmap(p->pagetable, p->k_pagetable, p->sz, sz) == -1) {
+        printk("growproc : u2kvmmap failed");
+        sz = uvmdealloc(p->pagetable, sz, p->sz);
+        return -1;
+      }
+      sfence_vma();
     }
-  } else if (n < 0) {
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+
+    else return -1;
   }
+
+  else if (n < 0) {
+    uint64 decrease = -(uint64)n;
+    if (sz < decrease) {
+      printk("growproc : sz + n < 0");
+      return -1;
+    }
+
+    uint64 npages = (PGROUNDUP(sz) - PGROUNDUP(sz + n)) / PGSIZE;
+    if(npages > 0)
+      uvmunmap(p->k_pagetable, PGROUNDUP(sz + n), npages, 0);
+    sfence_vma();
+    
+    if ((sz = uvmdealloc(p->pagetable, sz, sz + n)) == -1) {
+      return -1;
+    }
+  }
+
   p->sz = sz;
+
   return 0;
 }
 
@@ -337,17 +362,25 @@ kfork(void)
   struct proc *p = myproc();
 
   // Allocate process.
-  if ((np = allocproc()) == 0) {
+  if ((np = allocproc()) == 0) { // here already set up the kernel stack
     return -1;
   }
 
-  // Copy user memory from parent to child.
+  // Copy user memory from parent to child, create a new page for child
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
     freeproc(np);
     release(&np->lock);
     return -1;
   }
-  np->sz = p->sz;
+
+  np->sz = p->sz; // set the right np->sz for the u2kvmmap
+
+  // Copy child upgtbl to child kpgtbl, Only mapping no creating.
+  if(u2kvmmap(np->pagetable, np->k_pagetable, 0, np->sz) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);

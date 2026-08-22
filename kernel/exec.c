@@ -33,8 +33,9 @@ kexec(char *path, char **argv)
   struct elfhdr elf;
   struct inode *ip;
   struct proghdr ph;
-  pagetable_t pagetable = 0, oldpagetable;
+  pagetable_t pagetable = 0, oldpagetable;    // 防止中途失败丧失原有pagetable
   struct proc *p = myproc();
+  uint unmap = 0;           // if the 
 
   begin_op();
 
@@ -118,11 +119,18 @@ kexec(char *path, char **argv)
     goto bad;
   if (copyout(pagetable, sp, (char *)ustack, (argc + 1) * sizeof(uint64)) < 0)
     goto bad;
+  
+  oldpagetable = p->pagetable;
 
-  // a0 and a1 contain arguments to user main(argc, argv)
-  // argc is returned via the system call return
-  // value, which goes in a0.
-  p->trapframe->a1 = sp;
+  // delete the old mapping to the kernel pgtbl
+  uvmunmap(p->k_pagetable, 0, PGROUNDUP(oldsz)/PGSIZE, 0);
+  unmap  = 1;
+
+  // Copy the new pagetable to the old k_pagetable
+  if(u2kvmmap(pagetable, p->k_pagetable, 0, sz) == -1)
+    goto bad;
+
+  sfence_vma();
 
   // Save program name for debugging.
   for (last = s = path; *s; s++)
@@ -131,11 +139,15 @@ kexec(char *path, char **argv)
   safestrcpy(p->name, last, sizeof(p->name));
 
   // Commit to the user image.
-  oldpagetable = p->pagetable;
+  // a0 and a1 contain arguments to user main(argc, argv)
+  // argc is returned via the system call return
+  // value, which goes in a0.
+  p->trapframe->a1 = sp;
   p->pagetable = pagetable;
   p->sz = sz;
   p->trapframe->epc = elf.entry; // initial program counter = ulib.c:start()
   p->trapframe->sp = sp;         // initial stack pointer
+
   proc_freepagetable(oldpagetable, oldsz);
 
   // call vmprint
@@ -152,6 +164,11 @@ bad:
   if (ip) {
     iunlockput(ip);
     end_op();
+  }
+  if (unmap == 1) {
+    if (u2kvmmap(oldpagetable, p->k_pagetable, 0, oldsz) == -1)
+      printk("kexec : u2kvmmap fail to remap after bad");
+      sfence_vma();
   }
   return -1;
 }
