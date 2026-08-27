@@ -47,6 +47,7 @@ usertrap(void)
   w_stvec((uint64)kernelvec); //DOC: kernelvec
 
   struct proc *p = myproc();
+  pte_t *pte;
 
   // save user program counter.
   p->trapframe->epc = r_sepc();
@@ -72,7 +73,8 @@ usertrap(void)
     // ok
   } 
 
-  else if ((r_scause() == 15 || r_scause() == 13) && r_stval() < p->sz) {
+  else if ((r_scause() == 15 || r_scause() == 13) && r_stval() < p->sz
+  && ((pte = walk(p->pagetable, r_stval(), 0)) == 0 || (*pte & PTE_V) == 0)) { // 可以排除guard page
     // scause : 15 -> store page fault  13 : load page fault
     // 1.分配物理页 2.初始化物理页 3.将pa映射到pagetable上的va
     uint64 pa;
@@ -201,23 +203,55 @@ kerneltrap()
     // ok
   }
 
-  else if ((scause == 15 || scause == 13) && (r_stval() < p->sz)) { // Trap from page fault
-    uint64 pa;
-    if((pa = (uint64)kalloc()) != 0) {
-      memset((void *)pa, 0, PGSIZE);
-      if (mappages(p->pagetable, PGROUNDDOWN(r_stval()), PGSIZE, 
-      pa, PTE_U | PTE_R | PTE_W) == -1 
-      || mappages(p->k_pagetable, PGROUNDDOWN(r_stval()), PGSIZE,
-      pa, PTE_R | PTE_W) == -1) {
-        printe(p);
-        uvmunmap(p->k_pagetable, PGROUNDDOWN(r_stval()), 1, 0);
-        uvmunmap(p->pagetable, PGROUNDDOWN(r_stval()), 1, 0);
-        kfree((void *)pa);
-        panic("kerneltrap : No more physical memmory");
-      }
-      sfence_vma();
+  else if (scause == 15 || scause == 13) {
+    uint64 faultva = r_stval();
+    uint64 va = PGROUNDDOWN(faultva);
+    pte_t *pte = 0;
+    int lazy_fault = 0;
+
+    // User virtual addresses are below PLIC in the current layout.
+    if (p != 0 && faultva < p->sz && faultva < PLIC) {
+      pte = walk(p->pagetable, va, 0);
+      if (pte == 0 ||
+          (((*pte & PTE_V) == 0) && ((*pte & PTE_G) == 0)))
+        lazy_fault = 1;
     }
-    else panic("kerneltrap : No more physical memmory");
+
+    if (lazy_fault) {
+      uint64 pa;
+      if((pa = (uint64)kalloc()) != 0) {
+        memset((void *)pa, 0, PGSIZE);
+        if (mappages(p->pagetable, va, PGSIZE,
+        pa, PTE_U | PTE_R | PTE_W) == -1
+        || mappages(p->k_pagetable, va, PGSIZE,
+        pa, PTE_R | PTE_W) == -1) {
+          printe(p);
+          uvmunmap(p->k_pagetable, va, 1, 0);
+          uvmunmap(p->pagetable, va, 1, 0);
+          kfree((void *)pa);
+          panic("kerneltrap : No more physical memmory");
+        }
+        sfence_vma();
+      }
+      else panic("kerneltrap : No more physical memmory");
+    }
+
+    else if (p != 0 && faultva < PLIC) {
+      // Invalid low user address, including a PTE_G guard page.
+      kexit(-1);
+    }
+
+    else {
+      printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, sepc,
+             faultva);
+      panic("kerneltrap");
+    }
+  }
+
+  else {
+    printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, sepc,
+           r_stval());
+    panic("kerneltrap");
   }
 
   // give up the CPU if this is a timer interrupt.

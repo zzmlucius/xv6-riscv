@@ -239,7 +239,7 @@ kvmunmap(pagetable_t k_pagetable)
       uint64 child = PTE2PA(pte);
       kvmunmap((pagetable_t)child);
       k_pagetable[i] = 0;
-    } else if ((pte & PTE_V) && (pte & (PTE_W | PTE_R | PTE_X))) { // unmap the L0 but reserve the data
+    } else if ((pte & PTE_V) && (pte & (PTE_W | PTE_R | PTE_X)) && (pte & PTE_U) == 0) { // unmap the L0 but reserve the data
       k_pagetable[i] = 0;
       continue;
     }
@@ -414,7 +414,7 @@ uvmclear(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if (pte == 0)
     panic("uvmclear");
-  *pte &= ~PTE_U;
+  *pte = (*pte & ~PTE_U) | PTE_G;
 }
 
 // Copy from kernel to user.
