@@ -40,16 +40,29 @@ sys_wait(void)
 uint64
 sys_sbrk(void)
 {
-  uint64 addr;
+  struct proc *p = myproc();
   int n;
 
   argint(0, &n);
-  addr = myproc()->sz;
 
-  if (growproc(n) < 0)
+  uint64 oldsz = p->sz;
+
+  if(n < 0) {
+    if (growproc(n) == -1) {
+      return -1;
+    }
+  }
+
+  else if (p->sz + n >= PLIC) {
+    printk("sys_sbrk : Grow out of range");
     return -1;
+  }
 
-  return addr;
+  else p->sz += n;
+  // if (growproc(n) < 0)
+  //   return -1;
+
+  return oldsz;
 }
 
 uint64

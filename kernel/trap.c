@@ -66,11 +66,41 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if ((which_dev = devintr()) != 0) {
+  } 
+  
+  else if ((which_dev = devintr()) != 0) {
     // ok
-  } else {
-    printk("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
-    printk("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+  } 
+
+  else if ((r_scause() == 15 || r_scause() == 13) && r_stval() < p->sz) {
+    // scause : 15 -> store page fault  13 : load page fault
+    // 1.分配物理页 2.初始化物理页 3.将pa映射到pagetable上的va
+    uint64 pa;
+    if((pa = (uint64)kalloc()) != 0) {
+      memset((void *)pa, 0, PGSIZE);
+      if (mappages(p->pagetable, PGROUNDDOWN(r_stval()), PGSIZE, 
+      pa, PTE_U | PTE_R | PTE_W) == -1 
+      || mappages(p->k_pagetable, PGROUNDDOWN(r_stval()), PGSIZE,
+      pa, PTE_R | PTE_W) == -1) {
+        printe(p);
+        printk("No more free physical memmory.");
+        uvmunmap(p->k_pagetable, PGROUNDDOWN(r_stval()), 1, 0);
+        uvmunmap(p->pagetable, PGROUNDDOWN(r_stval()), 1, 0);
+        kfree((void *)pa);
+        setkilled(p);
+      }
+      sfence_vma();
+    }
+    
+    else {
+      printe(p);
+      printk("No more free physical memmory.");
+      setkilled(p);
+    }
+  }
+
+  else {
+    printe(p);
     setkilled(p);
   }
 
@@ -156,6 +186,7 @@ prepare_return(void)
 void
 kerneltrap()
 {
+  struct proc *p = myproc();
   int which_dev = 0;
   uint64 sepc = r_sepc();
   uint64 sstatus = r_sstatus();
@@ -166,11 +197,27 @@ kerneltrap()
   if (intr_get() != 0)
     panic("kerneltrap: interrupts enabled");
 
-  if ((which_dev = devintr()) == 0) {
-    // interrupt or trap from an unknown source
-    printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, r_sepc(),
-           r_stval());
-    panic("kerneltrap");
+  if ((which_dev = devintr()) != 0) {
+    // ok
+  }
+
+  else if ((scause == 15 || scause == 13) && (r_stval() < p->sz)) { // Trap from page fault
+    uint64 pa;
+    if((pa = (uint64)kalloc()) != 0) {
+      memset((void *)pa, 0, PGSIZE);
+      if (mappages(p->pagetable, PGROUNDDOWN(r_stval()), PGSIZE, 
+      pa, PTE_U | PTE_R | PTE_W) == -1 
+      || mappages(p->k_pagetable, PGROUNDDOWN(r_stval()), PGSIZE,
+      pa, PTE_R | PTE_W) == -1) {
+        printe(p);
+        uvmunmap(p->k_pagetable, PGROUNDDOWN(r_stval()), 1, 0);
+        uvmunmap(p->pagetable, PGROUNDDOWN(r_stval()), 1, 0);
+        kfree((void *)pa);
+        panic("kerneltrap : No more physical memmory");
+      }
+      sfence_vma();
+    }
+    else panic("kerneltrap : No more physical memmory");
   }
 
   // give up the CPU if this is a timer interrupt.

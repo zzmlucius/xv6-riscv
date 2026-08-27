@@ -333,7 +333,7 @@ growproc(int n)
   else if (n < 0) {
     uint64 decrease = -(uint64)n;
     if (sz < decrease) {
-      printk("growproc : sz + n < 0");
+      printk("growproc : Shrinking out of range");
       return -1;
     }
 

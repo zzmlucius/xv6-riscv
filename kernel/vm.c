@@ -107,6 +107,7 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+// 建立三级页表结构的核心函数
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc) // 寻址、创建新页表页、查询
 {
@@ -177,7 +178,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       return -1;
     if (*pte & PTE_V)
       panic("mappages: remap");
-    *pte = PA2PTE(pa) | perm | PTE_V;
+    *pte = PA2PTE(pa) | perm | PTE_V; // kernel sentence
     if (a == last)
       break;
     a += PGSIZE;
@@ -221,13 +222,13 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       uint64 pa = PTE2PA(*pte);
       kfree((void *)pa);
     }
-    *pte = 0;
+    *pte = 0; // 将L0PTE置为0
   }
 }
 
-// Only free the mappings page, reserve the data pages !
-// Only unmap the links built by kvmmap, mappings of kernel stack has to be cleaned before
-// Can not free the physical addresses
+// Only unmap the mappings built by kvmmap,
+// mappings of kernel stack has to be cleaned already.
+// Can not free the physical addresses.
 void
 kvmunmap(pagetable_t k_pagetable)
 {
@@ -247,7 +248,8 @@ kvmunmap(pagetable_t k_pagetable)
 }
 
 // Allocate PTEs and physical memory to grow a process from oldsz to
-// newsz, which need not be page aligned.  Returns new size or 0 on error.
+// newsz, which need not be page aligned. 
+// Returns new size or 0 on error.
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {
@@ -310,7 +312,7 @@ freewalk(pagetable_t pagetable)
       panic("freewalk: leaf");
     }
   }
-  // 已来到L2且叶子页(data page)已被释放, 将释放L2映射页(map page)
+  // 已来到L0且叶子页(data page)已被释放, 将释放L0页
   kfree((void *)pagetable);
 }
 
@@ -344,8 +346,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue; // page table entry hasn't been allocated
     if ((*pte & PTE_V) == 0)
       continue; // physical page hasn't been allocated
-    pa = PTE2PA(*pte);       // 取出pte对应的物理地址pa
-    flags = PTE_FLAGS(*pte); // 取出pte中的flags
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte);
     if ((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char *)pa, PGSIZE); // 将pa中大小位PGSIZE的数据移入mem (memmove要求两个pa)
@@ -383,10 +385,14 @@ u2kvmmap(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 lowaddr, uint64 highaddr
       continue; // physical page hasn't been allocated
     pa = PTE2PA(*pte);
 
-    // set the PTE_U = 0 for k_pagetable to visit it through MMU
+    // skip the guard page
+    if (((*pte & PTE_U) == 0) && ((*pte & PTE_V) == 1))
+      continue;
+
+    // set valid user page PTE_U = 0 for k_pagetable to visit it through MMU
     flags = PTE_FLAGS(*pte & (uint64)(~PTE_U));
 
-    if (mappages(kpgtbl, i, PGSIZE, pa, flags) != 0) // 页映射不是精确映射
+    if (mappages(kpgtbl, i, PGSIZE, pa, flags) != 0)
       goto err;
   }
 

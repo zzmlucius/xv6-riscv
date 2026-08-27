@@ -166,3 +166,9 @@ backtrace(void) {
     fp = *((uint64 *)fp - 2);
   }
 }
+
+// trap err format print
+void printe(struct proc *p) {
+  printk("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+  printk("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+}

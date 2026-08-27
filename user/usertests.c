@@ -2602,9 +2602,9 @@ lazy_alloc(char *s)
 {
   char *i, *prev_end, *new_end;
 
-  prev_end = sbrklazy(REGION_SZ);
+  prev_end = sbrk(REGION_SZ);
   if (prev_end == (char *)SBRK_ERROR) {
-    printf("sbrklazy() failed\n");
+    printf("sbrk() failed\n");
     exit(1);
   }
   new_end = prev_end + REGION_SZ;
@@ -2631,9 +2631,9 @@ lazy_unmap(char *s)
   int pid;
   char *i, *prev_end, *new_end;
 
-  prev_end = sbrklazy(REGION_SZ);
+  prev_end = sbrk(REGION_SZ);
   if (prev_end == (char *)SBRK_ERROR) {
-    printf("sbrklazy() failed\n");
+    printf("sbrk() failed\n");
     exit(1);
   }
   new_end = prev_end + REGION_SZ;
@@ -2647,7 +2647,7 @@ lazy_unmap(char *s)
       printf("error forking\n");
       exit(1);
     } else if (pid == 0) {
-      sbrklazy(-1L * REGION_SZ);
+      sbrk(-1L * REGION_SZ);
       *(char **)i = i;
       exit(0);
     } else {
@@ -2669,7 +2669,7 @@ lazy_copy(char *s)
   // copyinstr on lazy page
   {
     char *p = sbrk(0);
-    sbrklazy(4 * PGSIZE);
+    sbrk(4 * PGSIZE);
     open(p + 8192, 0);
   }
 
@@ -2719,20 +2719,20 @@ lazy_sbrk(char *s)
   // sbrk() takes just int, so take 2^30-sized steps towards MAXVA
   char *p = sbrk(0);
   while ((uint64)p < MAXVA - (1 << 30)) {
-    p = sbrklazy(1 << 30);
+    p = sbrk(1 << 30);
     if (p < 0) {
-      printf("sbrklazy(%d) returned %p\n", 1 << 30, p);
+      printf("sbrk(%d) returned %p\n", 1 << 30, p);
       exit(1);
     }
 
-    p = sbrklazy(0);
+    p = sbrk(0);
   }
 
   int n = TRAPFRAME - PGSIZE - (uint64)p;
 
-  char *p1 = sbrklazy(n);
+  char *p1 = sbrk(n);
   if (p1 < 0 || p1 != p) {
-    printf("sbrklazy(%d) returned %p, not expected %p\n", n, p1, p);
+    printf("sbrk(%d) returned %p, not expected %p\n", n, p1, p);
     exit(1);
   }
 
@@ -2754,9 +2754,9 @@ lazy_sbrk(char *s)
     exit(1);
   }
 
-  p = sbrklazy(1);
+  p = sbrk(1);
   if ((uint64)p != -1) {
-    printf("sbrklazy(1) returned %p, expected error\n", p);
+    printf("sbrk(1) returned %p, expected error\n", p);
     exit(1);
   }
 
