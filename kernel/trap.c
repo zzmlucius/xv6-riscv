@@ -82,11 +82,11 @@ usertrap(void)
       memset((void *)pa, 0, PGSIZE);
       if (mappages(p->pagetable, PGROUNDDOWN(r_stval()), PGSIZE, 
       pa, PTE_U | PTE_R | PTE_W) == -1 
-      || mappages(p->k_pagetable, PGROUNDDOWN(r_stval()), PGSIZE,
+      || mappages(p->k_pagetable, PGROUNDDOWN(r_stval() + HIGH_HALF_BASE), PGSIZE,
       pa, PTE_R | PTE_W) == -1) {
         printe(p);
         printk("No more free physical memmory.");
-        uvmunmap(p->k_pagetable, PGROUNDDOWN(r_stval()), 1, 0);
+        uvmunmap(p->k_pagetable, PGROUNDDOWN(r_stval() + HIGH_HALF_BASE), 1, 0);
         uvmunmap(p->pagetable, PGROUNDDOWN(r_stval()), 1, 0);
         kfree((void *)pa);
         setkilled(p);
@@ -203,52 +203,84 @@ kerneltrap()
     // ok
   }
 
-  else if (scause == 15 || scause == 13) {
+  else if (scause == 15 || scause == 13) { // load/store page fault
+
     uint64 faultva = r_stval();
-    uint64 va = PGROUNDDOWN(faultva);
-    pte_t *pte = 0;
-    int lazy_fault = 0;
 
-    // User virtual addresses are below PLIC in the current layout.
-    if (p != 0 && faultva < p->sz && faultva < PLIC) {
-      pte = walk(p->pagetable, va, 0);
-      if (pte == 0 ||
-          (((*pte & PTE_V) == 0) && ((*pte & PTE_G) == 0)))
-        lazy_fault = 1;
-    }
+    if (faultva >= HIGH_HALF_BASE) { // 发生在高半区用户态
+      uint64 ufaultva = K2U(faultva);
+      uint64 align_ufva = PGROUNDDOWN(ufaultva);
+      uint64 align_fva  = PGROUNDDOWN(faultva);
+      pte_t *pte = 0;
+      int lazy_fault = 0;
 
-    if (lazy_fault) {
-      uint64 pa;
-      if((pa = (uint64)kalloc()) != 0) {
-        memset((void *)pa, 0, PGSIZE);
-        if (mappages(p->pagetable, va, PGSIZE,
-        pa, PTE_U | PTE_R | PTE_W) == -1
-        || mappages(p->k_pagetable, va, PGSIZE,
-        pa, PTE_R | PTE_W) == -1) {
-          printe(p);
-          uvmunmap(p->k_pagetable, va, 1, 0);
-          uvmunmap(p->pagetable, va, 1, 0);
-          kfree((void *)pa);
-          panic("kerneltrap : No more physical memmory");
-        }
-        sfence_vma();
+      // k_pagetable User virtual addresses are below in the current layout.
+      if (p != 0 && ufaultva < p->sz) {
+        pte = walk(p->pagetable, ufaultva, 0);
+        if (pte == 0 ||
+            (((*pte & PTE_V) == 0) && ((*pte & PTE_G) == 0)))
+          lazy_fault = 1;
       }
-      else panic("kerneltrap : No more physical memmory");
+
+      if (lazy_fault) {
+        uint64 pa;
+        if ((pa = (uint64)kalloc()) != 0) {
+          memset((void *)pa, 0, PGSIZE);
+          if (mappages(p->pagetable, align_ufva, PGSIZE,
+          pa, PTE_U | PTE_R | PTE_W) == -1
+          || mappages(p->k_pagetable, align_fva, PGSIZE,
+          pa, PTE_R | PTE_W) == -1) {
+            printe(p);
+            uvmunmap(p->k_pagetable, align_fva, 1, 0);
+            uvmunmap(p->pagetable, align_ufva, 1, 0);
+            kfree((void *)pa);
+            printk("kerneltrap : lazy allocate fault");
+            kexit(-1);
+          }
+          sfence_vma();
+        }
+
+        else {
+          printk("kerneltrap : No more physical memory to lazy allocate");
+          kexit(-1);
+        }
+      }
+
+      else if (p != 0 && ufaultva < MAXVA) {
+        // 非lazy fault
+        kexit(-1);
+      }
+
+      else {
+        printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, sepc,
+              faultva);
+        panic("kerneltrap");
+      }
     }
 
-    else if (p != 0 && faultva < PLIC) {
-      // Invalid low user address, including a PTE_G guard page.
-      kexit(-1);
+    else if (faultva < HIGH_HALF_BASE && faultva >= MAXVA) { // 发生在不合理的地址
+      printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, sepc,
+              faultva);
+      printk("Invalid Sv39 address\n");
+      panic("kerneltrap");
+    }
+
+    else if (faultva < MAXVA && faultva >= KERNBASE) { // 发生在内核区
+      printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, sepc,
+              faultva);
+      printk("Fault in kernel address\n");
+      panic("kerneltrap");
     }
 
     else {
       printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, sepc,
-             faultva);
+              faultva);
+      printk("Unknown fault\n");
       panic("kerneltrap");
     }
   }
 
-  else {
+  else { // 除了load/store page fault 其他原因kerneltrap先不处理
     printk("scause=0x%lx sepc=0x%lx stval=0x%lx\n", scause, sepc,
            r_stval());
     panic("kerneltrap");

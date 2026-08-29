@@ -412,3 +412,7 @@ typedef uint64 *pagetable_t; // 512 PTEs
 // Sv39, to avoid having to sign-extend virtual addresses
 // that have the high bit set.
 #define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
+
+// Map the user va to the high half area of Sv39
+#define U2K(uva)   ((uva) + HIGH_HALF_BASE)
+#define K2U(kva)   ((kva) - HIGH_HALF_BASE)

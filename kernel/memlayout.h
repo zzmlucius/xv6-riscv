@@ -72,6 +72,11 @@
 // a space using to speed up certain user syscall.
 #define USYSCALL (TRAPFRAME - PGSIZE)
 
+// Map the user va to the high half area of the Sv39
+// Aiming to increase the max user va
+#define HIGH_HALF_BASE (~((1L << 38) - 1))
+#define HIGH_HALF_MAX  (~0ULL)
+
 #ifndef __ASSEMBLER__ // 让同一个头文件同时兼容C与汇编，汇编器会绕过他，C编译器会保留他
 struct usyscall {
     int pid;

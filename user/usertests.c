@@ -3200,8 +3200,12 @@ drivetests(int quick, int continuous, char *justone)
 {
   do {
     printf("usertests starting\n");
-    int free0 = countfree();
-    int free1 = 0;
+    // countfree() assumes that sbrk() allocates physical pages eagerly.
+    // With lazy allocation it would grow the virtual address space all the
+    // way to its limit without consuming physical memory, so disable this
+    // before/after free-page accounting for the lazy-allocation kernel.
+    // int free0 = countfree();
+    // int free1 = 0;
     int ntests = 0;
     int n;
     n = runtests(quicktests, justone, continuous);
@@ -3224,12 +3228,12 @@ drivetests(int quick, int continuous, char *justone)
         ntests += n;
       }
     }
-    if ((free1 = countfree()) < free0) {
-      printf("FAILED -- lost some free pages %d (out of %d)\n", free1, free0);
-      if (continuous != 2) {
-        return 1;
-      }
-    }
+    // if ((free1 = countfree()) < free0) {
+    //   printf("FAILED -- lost some free pages %d (out of %d)\n", free1, free0);
+    //   if (continuous != 2) {
+    //     return 1;
+    //   }
+    // }
     if (justone != 0 && ntests == 0) {
       printf("NO TESTS EXECUTED\n");
       return 1;

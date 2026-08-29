@@ -123,7 +123,7 @@ kexec(char *path, char **argv)
   oldpagetable = p->pagetable;
 
   // delete the old mapping to the kernel pgtbl
-  uvmunmap(p->k_pagetable, 0, PGROUNDUP(oldsz)/PGSIZE, 0);
+  uvmunmap(p->k_pagetable, U2K(0), PGROUNDUP(oldsz)/PGSIZE, 0);
   unmap  = 1;
 
   // Copy the new pagetable to the old k_pagetable

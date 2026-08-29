@@ -314,7 +314,7 @@ growproc(int n)
 
   sz = p->sz;
   if (n > 0) {
-    if (sz + n >= PLIC) {
+    if (sz + n >= USYSCALL) {
       return -1;
     }
 
@@ -339,7 +339,7 @@ growproc(int n)
 
     uint64 npages = (PGROUNDUP(sz) - PGROUNDUP(sz + n)) / PGSIZE;
     if(npages > 0)
-      uvmunmap(p->k_pagetable, PGROUNDUP(sz + n), npages, 0);
+      uvmunmap(p->k_pagetable, PGROUNDUP(sz + n) + HIGH_HALF_BASE, npages, 0);
     sfence_vma();
     
     if ((sz = uvmdealloc(p->pagetable, sz, sz + n)) == -1) {

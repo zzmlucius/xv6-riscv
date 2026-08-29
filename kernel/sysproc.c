@@ -53,7 +53,7 @@ sys_sbrk(void)
     }
   }
 
-  else if (p->sz + n >= PLIC) {
+  else if (p->sz + n >= USYSCALL) {
     printk("sys_sbrk : Grow out of range");
     return -1;
   }
