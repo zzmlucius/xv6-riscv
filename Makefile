@@ -155,7 +155,8 @@ UPROGS=\
 	$U/_shutdown\
 	$U/_bttest\
 	$U/_alarmtest\
-	$U/_lazytests
+	$U/_lazytests\
+	$U/_cowtest\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

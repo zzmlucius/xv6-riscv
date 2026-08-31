@@ -137,7 +137,7 @@ walkaddr(pagetable_t pagetable, uint64 va) // 返回L0PTE物理页起始地址
   pte_t *pte;
   uint64 pa;
 
-  if (va > MAXVA)
+  if (va >= MAXVA)
     return 0;
 
   pte = walk(pagetable, va, 0);
@@ -204,6 +204,8 @@ uvmcreate()
 // page-aligned. It's OK if the mappings don't exist.
 // Optionally free the physical memory.
 // Skip the middle page, Only unmap the L0 PTE
+// If do_free is non-zero, release this mapping's reference to the
+// physical data page and free the page when the last reference disappears.
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -218,11 +220,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       continue;
     if ((*pte & PTE_V) == 0) // has physical page been allocated?
       continue;
-    if (do_free) {
-      uint64 pa = PTE2PA(*pte);
-      kfree((void *)pa);
-    }
+    uint64 pa = PTE2PA(*pte);
     *pte = 0; // 将L0PTE置为0
+    if (do_free) // only unmapping an owning user PTE releases a reference
+      refdecr(pa);
   }
 }
 
@@ -273,6 +274,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
+    refincr((uint64)mem);
   }
   return newsz;
 }
@@ -324,7 +326,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if (sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
-  freewalk(pagetable);
+  freewalk(pagetable); // 此时叶子页已被释放
 }
 
 // Given a parent process's page table, copy
@@ -333,14 +335,17 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+// New feature : Map the pa from the old pagetable to the new,
+// without allocate new data physical page
 int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+uvmcopy(pagetable_t old, pagetable_t oldk, pagetable_t new, uint64 sz)
 {
-  pte_t *pte;
+  pte_t *pte, *kpte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
+  // First create all child mappings without changing the parent. This keeps
+  // the parent writable if allocation of a child page-table page fails.
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
       continue; // page table entry hasn't been allocated
@@ -348,14 +353,42 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue; // physical page hasn't been allocated
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if ((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char *)pa, PGSIZE); // 将pa中大小位PGSIZE的数据移入mem (memmove要求两个pa)
-    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) { // va : i, pa : mem, 注意mappages的作用是将ra refer to the exited pa
-      kfree(mem);
+
+    if ((flags & PTE_U) != 0 && (flags & PTE_W) != 0 &&
+        (flags & PTE_G) == 0) {
+      kpte = walk(oldk, U2K(i), 0);
+      if (kpte == 0 || (*kpte & PTE_V) == 0 || PTE2PA(*kpte) != pa)
+        goto err;
+      flags = (flags & ~PTE_W) | PTE_COW;
+    }
+
+    if (mappages(new, i, PGSIZE, pa, flags) != 0) { // va : i, pa : pa, 注意mappages的作用是将ra refer to the exited pa
       goto err;
     }
+    refincr(pa); // after successfully mapping
   }
+
+  // Only after the complete child mapping succeeds, write-protect the
+  // parent's user mapping and its high-half kernel alias together.
+  for (uint64 j = 0; j < sz; j += PGSIZE) {
+    pte = walk(old, j, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0)
+      continue;
+    if ((*pte & PTE_U) == 0 || (*pte & PTE_W) == 0 ||
+        (*pte & PTE_G) != 0)
+      continue;
+
+    pa = PTE2PA(*pte);
+    kpte = walk(oldk, U2K(j), 0);
+    if (kpte == 0 || (*kpte & PTE_V) == 0 || PTE2PA(*kpte) != pa)
+      panic("uvmcopy: kernel alias");
+
+    *pte = (*pte & ~PTE_W) | PTE_COW;
+    *kpte = (*kpte & ~PTE_W) | PTE_COW;
+  }
+
+  sfence_vma();
+
   return 0;
 
 err:
@@ -366,6 +399,8 @@ err:
 // Copy upgtbl to kpgtbl, Only mapping no creating.
 // lowaddr need to be page-aligned
 // If failed, return -1
+// For COW, u2kvmmap will be after uvmcopy so
+// Kernel aliases do not contribute to the user-page reference count.
 int
 u2kvmmap(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 lowaddr, uint64 highaddr)
 {
@@ -374,7 +409,7 @@ u2kvmmap(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 lowaddr, uint64 highaddr
     printk("u2kvmmap : user memmory out of range");
     return -1;
   }
-  
+
   pte_t *pte;
   uint64 pa, i;
   uint flags;
@@ -387,7 +422,7 @@ u2kvmmap(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 lowaddr, uint64 highaddr
     pa = PTE2PA(*pte);
 
     // skip the guard page
-    if (*pte & PTE_G == 0)
+    if ((*pte & PTE_G) != 0)
       continue;
 
     // set valid user page PTE_U = 0 for k_pagetable to visit it through MMU
@@ -401,7 +436,7 @@ u2kvmmap(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 lowaddr, uint64 highaddr
 
 err:
   // 映射失败不能释放物理页
-  uvmunmap(kpgtbl, PGROUNDUP(U2K(lowaddr)), (i - PGROUNDUP(lowaddr)) / PGSIZE, 0); 
+  uvmunmap(kpgtbl, PGROUNDUP(U2K(lowaddr)), (i - PGROUNDUP(lowaddr)) / PGSIZE, 0);
   return -1;
 }
 
@@ -418,6 +453,58 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte = (*pte & ~PTE_U) | PTE_G;
 }
 
+// Resolve a COW store fault for a user virtual address. The user mapping and
+// its high-half kernel alias always change together. Reference counts track
+// only owning user mappings, not kernel aliases.
+int
+cowfault(pagetable_t pagetable, pagetable_t kpagetable, uint64 va)
+{
+  pte_t *pte, *kpte;
+  uint64 va0, pa, mem;
+  uint flags, kflags, refs;
+
+  if (va >= MAXVA)
+    return -1;
+  va0 = PGROUNDDOWN(va);
+
+  pte = walk(pagetable, va0, 0);
+  if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
+      (*pte & PTE_COW) == 0 || (*pte & PTE_W) != 0)
+    return -1;
+
+  pa = PTE2PA(*pte);
+  kpte = walk(kpagetable, U2K(va0), 0);
+  if (kpte == 0 || (*kpte & PTE_V) == 0 || PTE2PA(*kpte) != pa)
+    return -1;
+
+  refs = getref(pa);
+  if (refs == 0)
+    return -1;
+
+  flags = (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W;
+  kflags = (PTE_FLAGS(*kpte) & ~(PTE_COW | PTE_U)) | PTE_W;
+
+  if (refs == 1) {
+    *pte = PA2PTE(pa) | flags;
+    *kpte = PA2PTE(pa) | kflags;
+  } else {
+    mem = (uint64)kalloc();
+    if (mem == 0)
+      return -1;
+    memmove((void *)mem, (void *)pa, PGSIZE);
+
+    // The new page now has one owning user mapping. The kernel alias does
+    // not contribute another reference.
+    refincr(mem);
+    *pte = PA2PTE(mem) | flags;
+    *kpte = PA2PTE(mem) | kflags;
+    refdecr(pa);
+  }
+
+  sfence_vma();
+  return 0;
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
@@ -426,6 +513,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   struct proc *p = myproc();
   uint64 va0, pa0, n;
+  pte_t *pte;
 
   if (len > 0 && (dstva >= MAXVA || len > MAXVA - dstva))
     return -1;
@@ -442,6 +530,17 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
       va0 = PGROUNDDOWN(dstva);
       if (va0 >= USYSCALL)
         return -1;
+
+      // // An absent PTE is a legal lazy page, and a read-only COW PTE will be
+      // // resolved by kerneltrap when the high-half alias is written. Other
+      // // existing non-writable mappings (text and guard pages) are invalid
+      // // copyout destinations and must make copyout return -1, not kill the
+      // // process from kerneltrap.
+      // pte = walk(pagetable, va0, 0);
+      // if (pte != 0 && (*pte & PTE_V) != 0 &&
+      //     ((*pte & PTE_U) == 0 ||
+      //      ((*pte & PTE_W) == 0 && (*pte & PTE_COW) == 0)))
+      //   return -1;
 
       n = PGSIZE - (dstva - va0);
       if (n > len)

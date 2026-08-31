@@ -367,7 +367,7 @@ kfork(void)
   }
 
   // Copy user memory from parent to child, create a new page for child
-  if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
+  if (uvmcopy(p->pagetable, p->k_pagetable, np->pagetable, p->sz) < 0) {
     freeproc(np);
     release(&np->lock);
     return -1;

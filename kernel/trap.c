@@ -74,7 +74,7 @@ usertrap(void)
   } 
 
   else if ((r_scause() == 15 || r_scause() == 13) && r_stval() < p->sz
-  && ((pte = walk(p->pagetable, r_stval(), 0)) == 0 || (*pte & PTE_V) == 0)) { // 可以排除guard page
+  && ((pte = walk(p->pagetable, r_stval(), 0)) == 0 || (*pte & PTE_V) == 0)) { // load/store fault
     // scause : 15 -> store page fault  13 : load page fault
     // 1.分配物理页 2.初始化物理页 3.将pa映射到pagetable上的va
     uint64 pa;
@@ -90,13 +90,28 @@ usertrap(void)
         uvmunmap(p->pagetable, PGROUNDDOWN(r_stval()), 1, 0);
         kfree((void *)pa);
         setkilled(p);
+      } else {
+        // Only the user PTE is an owning mapping; the high-half mapping is
+        // merely a kernel alias.
+        refincr(pa);
+        sfence_vma();
       }
-      sfence_vma();
     }
     
     else {
       printe(p);
       printk("No more free physical memmory.");
+      setkilled(p);
+    }
+  }
+
+  else if (r_scause() == 15 && r_stval() < p->sz &&
+           ((pte = walk(p->pagetable, r_stval(), 0)) != 0) &&
+           (*pte & PTE_V) != 0 && (*pte & PTE_U) != 0 &&
+           (*pte & PTE_COW) != 0 && (*pte & PTE_W) == 0) {
+    if (cowfault(p->pagetable, p->k_pagetable, r_stval()) < 0) {
+      printe(p);
+      printk("usertrap: cannot resolve COW fault");
       setkilled(p);
     }
   }
@@ -213,6 +228,7 @@ kerneltrap()
       uint64 align_fva  = PGROUNDDOWN(faultva);
       pte_t *pte = 0;
       int lazy_fault = 0;
+      int cow_fault = 0;
 
       // k_pagetable User virtual addresses are below in the current layout.
       if (p != 0 && ufaultva < p->sz) {
@@ -220,6 +236,10 @@ kerneltrap()
         if (pte == 0 ||
             (((*pte & PTE_V) == 0) && ((*pte & PTE_G) == 0)))
           lazy_fault = 1;
+        else if (scause == 15 && (*pte & PTE_V) != 0 &&
+                 (*pte & PTE_U) != 0 && (*pte & PTE_COW) != 0 &&
+                 (*pte & PTE_W) == 0)
+          cow_fault = 1;
       }
 
       if (lazy_fault) {
@@ -237,11 +257,19 @@ kerneltrap()
             printk("kerneltrap : lazy allocate fault");
             kexit(-1);
           }
+          refincr(pa);
           sfence_vma();
         }
 
         else {
           printk("kerneltrap : No more physical memory to lazy allocate");
+          kexit(-1);
+        }
+      }
+
+      else if (cow_fault) {
+        if (cowfault(p->pagetable, p->k_pagetable, ufaultva) < 0) {
+          printk("kerneltrap: cannot resolve COW fault");
           kexit(-1);
         }
       }
